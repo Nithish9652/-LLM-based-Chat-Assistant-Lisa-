@@ -11,7 +11,7 @@ import re
 import screen_brightness_control as sbc
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
-apikey = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
+apikey = "Add you API KEY"
 
 # Setup voice
 speaker = win32com.client.Dispatch("SAPI.SpVoice")
