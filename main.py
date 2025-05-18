@@ -8,15 +8,71 @@ import urllib.parse
 import requests
 import uuid
 import re
-import wmi
 import screen_brightness_control as sbc
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
-apikey = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
+from deep_translator import GoogleTranslator
+from gtts import gTTS
+import playsound, tempfile, os
+apikey = "your api key"
+
 
 # Setup voice
 speaker = win32com.client.Dispatch("SAPI.SpVoice")
 speaker.Voice = speaker.GetVoices().Item(1)
+
+
+def choose_voice_gender(max_tries: int = 3):
+    voices = speaker.GetVoices()
+
+    for _ in range(max_tries):
+        speaker.Speak("Would you like a women voice or a man voice?")
+        with sr.Microphone() as source:
+            r.adjust_for_ambient_noise(source, duration=0.5)
+            try:
+                audio = r.listen(source, timeout=5, phrase_time_limit=4)
+                reply = r.recognize_google(audio, language="en-in").lower()
+                print("Voice-choice reply:", reply)
+            except sr.WaitTimeoutError:
+                speaker.Speak("No answer heard.")
+                continue
+            except sr.UnknownValueError:
+                speaker.Speak("Sorry, I couldn't understand.")
+                continue
+            except sr.RequestError:
+                speaker.Speak("Speech service error. I'll keep the default voice.")
+                return
+
+        if any(word in reply for word in ("girl", "female", "woman")):
+            desired_gender = "Female"
+        elif any(word in reply for word in ("boy", "male", "man","men")):
+            desired_gender = "Male"
+        else:
+            speaker.Speak("Please say girl or boy.")
+            continue
+
+        # Try to find the first installed voice that matches the gender
+        selected = None
+        for v in voices:
+            try:
+                if v.GetAttribute("Gender") == desired_gender:
+                    selected = v
+                    break
+            except Exception:
+                # Older SAPI versions: fall back to description text
+                if desired_gender.lower() in v.GetDescription().lower():
+                    selected = v
+                    break
+
+        if selected:
+            speaker.Voice = selected
+            speaker.Speak(f"Okay, I will speak with a {desired_gender.lower()} voice.")
+            return
+        else:
+            speaker.Speak(f"Sorry, no {desired_gender.lower()} voice is installed.")
+            return
+
+    speaker.Speak("I'll keep the current voice.")
 
 # Recognizer configuration
 r = sr.Recognizer()
@@ -24,48 +80,66 @@ r.energy_threshold = 1000
 r.dynamic_energy_threshold = True
 r.pause_threshold = 0.5
 
-def detect_devices():
-    import wmi
 
-    speaker.Speak("Detecting connected devices now.")
-    c = wmi.WMI()
-
-    # USB Devices
-    usb_devices = c.Win32_PnPEntity(PNPClass="USB")
-    usb_names = [dev.Name for dev in usb_devices if dev.Name]
-
-    # Bluetooth Devices via Win32_BluetoothDevice (paired/connected)
+def google_audio(text: str, lang_code: str = "en"):
+    """
+    Synthesise <text> with Google TTS and play it back.
+    lang_code examples: 'en', 'hi', 'te', 'fr', …
+    """
     try:
-        bt = c.Win32_BluetoothDevice()
-        bt_names = [dev.Name for dev in bt if dev.Name]
-    except AttributeError:
-        # fallback: filter PnPEntity entries for Bluetooth
-        bt_entities = c.Win32_PnPEntity()
-        bt_names = []
-        for dev in bt_entities:
-            if dev.Name and ("Bluetooth" in dev.Name or "BTHENUM" in (dev.PNPDeviceID or "")):
-                bt_names.append(dev.Name)
-        bt_names = list(dict.fromkeys(bt_names))
+        tts = gTTS(text=text, lang=lang_code)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            temp_mp3 = fp.name
+        tts.save(temp_mp3)
+        playsound.playsound(temp_mp3, block=True)
+    finally:
+        # remove the temp file even if playback fails
+        try:
+            os.remove(temp_mp3)
+        except:
+            pass
 
-    # Announce USB
-    if usb_names:
-        speaker.Speak("USB devices connected: " + ", ".join(usb_names[:3]))
+
+# spoken language names → gTTS language codes
+LANG_CODES = {
+    'afrikaans':'af','arabic':'ar','bengali':'bn','chinese':'zh-cn',
+    'dutch':'nl','english':'en','french':'fr','german':'de',
+    'hindi':'hi','italian':'it','japanese':'ja','korean':'ko',
+    'marathi':'mr','portuguese':'pt','punjabi':'pa','russian':'ru',
+    'spanish':'es','tamil':'ta','telugu':'te','urdu':'ur'
+}
+
+def translate_text(raw_cmd: str):
+    """
+    Accepts strings like
+        "hello how are you to telugu"
+        "hi everyone in spanish"
+    """
+    if " to " in raw_cmd:
+        text_part, lang_name = raw_cmd.rsplit(" to ", 1)
+    elif " in " in raw_cmd:
+        text_part, lang_name = raw_cmd.rsplit(" in ", 1)
     else:
-        speaker.Speak("No USB devices detected.")
+        speaker.Speak("Please say, for example: translate hello to Hindi.")
+        return
 
-    # Announce Bluetooth
-    if bt_names:
-        speaker.Speak("Bluetooth devices paired or connected: " + ", ".join(bt_names[:3]))
-    else:
-        speaker.Speak("No Bluetooth devices found.")
+    lang_name = lang_name.strip().lower()
+    text_part = text_part.strip()
 
-    # (Optional) log full lists to console for debugging
-    print("--- USB Devices ---")
-    for name in usb_names:
-        print(name)
-    print("--- Bluetooth Devices ---")
-    for name in bt_names:
-        print(name)
+    lang_code = LANG_CODES.get(lang_name)
+    if not lang_code:
+        speaker.Speak(f"Sorry, I don't support the language {lang_name}.")
+        return
+
+    try:
+        translated = GoogleTranslator(source="auto",
+                                      target=lang_code).translate(text_part)
+        print(f"TRANSLATION ({lang_name.title()}): {translated}")
+        google_audio(translated, lang_code)
+    except Exception as e:
+        print("Translation error:", e)
+        speaker.Speak("Something went wrong while translating.")
+
 
 
 def get_brightness():
@@ -363,6 +437,7 @@ def open_website(query):
 
 def main():
     greet_user()
+    choose_voice_gender()  # ask once: girl or boy voice?
     while True:
         with sr.Microphone() as source:
             print("Listening...")
@@ -388,8 +463,6 @@ def main():
                     now = datetime.datetime.now()
                     speaker.Speak(f"The time is {now.strftime('%H')} hours and {now.strftime('%M')} minutes")
                     continue
-                if "detect devices" in query or "list devices" in query:
-                    detect_devices()
                 if "increase volume" in query:
                     increase_volume()
                     continue
@@ -399,6 +472,9 @@ def main():
                     continue
                 if query == "open youtube":
                     handle_youtube()
+                    continue
+                if query.startswith("translate "):
+                    translate_text(query[len("translate "):])
                     continue
                 if "using artificial intelligence" in query:
                     ai(prompt=query)
