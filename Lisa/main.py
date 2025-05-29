@@ -9,7 +9,6 @@ import requests
 import uuid
 import re
 import screen_brightness_control as sbc
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
 from deep_translator import GoogleTranslator
 from gtts import gTTS
@@ -25,10 +24,14 @@ import pyautogui
 from PIL import Image
 import pytesseract
 import pyttsx3
+import comtypes
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from ctypes import POINTER, cast
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
-apikey = "your api key"
-GEMINI_API_KEY = "your api key"
+apikey = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
+GEMINI_API_KEY = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 # -------- ENHANCED TTS SETUP --------
@@ -39,6 +42,11 @@ speaker.Voice = speaker.GetVoices().Item(1)
 # Additional pyttsx3 engine for enhanced features
 engine = pyttsx3.init()
 
+# Recognizer configuration
+r = sr.Recognizer()
+r.energy_threshold = 1000
+r.dynamic_energy_threshold = True
+r.pause_threshold = 0.5
 
 def set_indian_english_voice():
     voices = engine.getProperty('voices')
@@ -311,11 +319,7 @@ def choose_voice_gender(max_tries: int = 3):
     speaker.Speak("I'll keep the current voice.")
 
 
-# Recognizer configuration
-r = sr.Recognizer()
-r.energy_threshold = 1000
-r.dynamic_energy_threshold = True
-r.pause_threshold = 0.5
+
 
 
 def google_audio(text: str, lang_code: str = "en"):
@@ -379,6 +383,20 @@ def translate_text(raw_cmd: str):
         speaker.Speak("Something went wrong while translating.")
 
 
+
+# Function to set the volume to a specific value (0 to 100)
+def set_volume(volume_level):
+    from ctypes import POINTER, cast
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+    devices = AudioUtilities.GetSpeakers()
+    interface = devices.Activate(
+        IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+    volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
+    volume_interface.SetMasterVolumeLevelScalar(volume_level / 100, None)
+
+
 def get_brightness():
     current_brightness = sbc.get_brightness()[0]
     return current_brightness
@@ -404,10 +422,11 @@ def decrease_brightness():
 def get_volume():
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(
-        IAudioEndpointVolume.iid, 0, None)
+        IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
     volume = volume_interface.GetMasterVolumeLevelScalar() * 100
     return round(volume)
+
 
 
 # Function to increase the volume by 10%
@@ -425,14 +444,6 @@ def decrease_volume():
     set_volume(new_volume)
     speaker.Speak(f"Volume decreased to {new_volume}%")
 
-
-# Function to set the volume to a specific value (0 to 100)
-def set_volume(volume_level):
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(
-        IAudioEndpointVolume.iid, 0, None)
-    volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
-    volume_interface.SetMasterVolumeLevelScalar(volume_level / 100, None)
 
 
 # -------- ENHANCED GEMINI API CALL --------
@@ -751,7 +762,7 @@ def process_enhanced_commands(command):
 
 def main():
     greet_user()
-    choose_voice_gender()  # ask once: girl or boy voice?
+    #choose_voice_gender()  # ask once: girl or boy voice?
 
     while True:
         check_events()
