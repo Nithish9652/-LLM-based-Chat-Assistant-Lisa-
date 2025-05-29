@@ -11,11 +11,305 @@ import re
 import screen_brightness_control as sbc
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import cast, POINTER
-apikey = "Add you API KEY"
+from deep_translator import GoogleTranslator
+from gtts import gTTS
+import subprocess
+import playsound, tempfile, os
+import keyboard
+import dateparser
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+import pickle
+import pyautogui
+from PIL import Image
+import pytesseract
+import pyttsx3
 
-# Setup voice
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+apikey = "your api key"
+GEMINI_API_KEY = "your api key"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+# -------- ENHANCED TTS SETUP --------
+# Original Windows SAPI setup
 speaker = win32com.client.Dispatch("SAPI.SpVoice")
 speaker.Voice = speaker.GetVoices().Item(1)
+
+# Additional pyttsx3 engine for enhanced features
+engine = pyttsx3.init()
+
+
+def set_indian_english_voice():
+    voices = engine.getProperty('voices')
+    indian_voice_found = False
+    for voice in voices:
+        # Pick voice that matches Indian English or fallback to English female
+        if ("india" in voice.name.lower() or "en-in" in voice.id.lower()) and "english" in voice.name.lower():
+            engine.setProperty('voice', voice.id)
+            indian_voice_found = True
+            break
+    if not indian_voice_found:
+        for voice in voices:
+            if "english" in voice.name.lower() and "female" in voice.name.lower():
+                engine.setProperty('voice', voice.id)
+                break
+    engine.setProperty('rate', 165)
+
+
+set_indian_english_voice()
+
+
+def enhanced_speak(text):
+    """Enhanced speak function with pyttsx3"""
+    print(f"Lisa A.I.: {text}")
+    engine.say(text)
+    engine.runAndWait()
+
+
+# In-memory events list
+events = []
+
+
+def get_gmail_service():
+    creds = None
+    if os.path.exists('gmail_token.pickle'):
+        with open('gmail_token.pickle', 'rb') as f:
+            creds = pickle.load(f)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists('credentials.json'):
+                speaker.Speak("Please place your Gmail API credentials.json in the folder.")
+                return None
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('gmail_token.pickle', 'wb') as f:
+            pickle.dump(creds, f)
+
+    return build('gmail', 'v1', credentials=creds)
+
+
+def read_unread_emails(max_messages=5):
+    """
+    Fetch up to max_messages unread emails, speak subject and snippet,
+    then mark them as read.
+    """
+    service = get_gmail_service()
+    if not service:
+        return
+
+    # List unread messages
+    results = service.users().messages().list(
+        userId='me',
+        labelIds=['INBOX', 'UNREAD'],
+        maxResults=max_messages
+    ).execute()
+    msgs = results.get('messages', [])
+
+    if not msgs:
+        speaker.Speak("You have no unread emails.")
+        return
+
+    for msg_meta in msgs:
+        msg = service.users().messages().get(
+            userId='me',
+            id=msg_meta['id'],
+            format='metadata',
+            metadataHeaders=['Subject', 'From']
+        ).execute()
+
+        headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+        subject = headers.get('Subject', '(no subject)')
+        sender = headers.get('From', '(unknown sender)')
+
+        # You can also fetch a snippet or full body if you like:
+        snippet = msg.get('snippet', '')
+
+        # Speak it
+        speaker.Speak(f"Email from {sender}. Subject: {subject}. {snippet}")
+
+        # Mark as read
+        service.users().messages().modify(
+            userId='me',
+            id=msg_meta['id'],
+            body={'removeLabelIds': ['UNREAD']}
+        ).execute()
+
+    speaker.Speak("Those were your unread emails.")
+
+
+def create_event(duration_minutes=60):
+    """
+    Keeps asking until the user gives a valid "Title at TIME" sentence,
+    then parses, adjusts for past-today times, and stores in global events.
+    """
+    while True:
+        # 1) prompt for input
+        speaker.Speak("Please tell me the event and time, like 'Team meeting at 3 PM today'.")
+        with sr.Microphone() as src:
+            r.adjust_for_ambient_noise(src, duration=0.5)
+            try:
+                audio = r.listen(src, timeout=7, phrase_time_limit=7)
+                sentence = r.recognize_google(audio, language="en-in").lower()
+                print(f"Event sentence: {sentence}")
+            except (sr.UnknownValueError, sr.WaitTimeoutError):
+                speaker.Speak("I didn't catch that. Let's try again.")
+                continue
+
+        # 2) validate format
+        if " at " not in sentence:
+            speaker.Speak("I need you to include 'at', for example: 'Lunch at 1 PM'.")
+            continue
+
+        # 3) parse title/time
+        title_part, time_part = sentence.split(" at ", 1)
+        event_title = title_part.strip()
+        time_str = time_part.strip().lower()
+
+        # bare-numeric times like "237" → "2:37 pm"
+        if re.fullmatch(r'\d{3,4}', time_str):
+            hh, mm = time_str[:-2], time_str[-2:]
+            time_str = f"{int(hh)}:{mm} pm"
+        else:
+            time_str = re.sub(
+                r'(\d{1,2})(\d{2})\s*(am|pm)',
+                r'\1:\2 \3',
+                time_str,
+                flags=re.IGNORECASE
+            )
+
+        # 4) convert to datetime
+        event_time = dateparser.parse(time_str)
+        if not event_time:
+            speaker.Speak(f"I couldn't understand the time '{time_str}'. Let's try again.")
+            continue
+
+        # 5) adjust for past-today
+        now = datetime.datetime.now()
+        if event_time < now and event_time.date() == now.date():
+            event_time += datetime.timedelta(days=1)
+            speaker.Speak("That time has passed today; I'm scheduling it for tomorrow.")
+
+        # 6) success! store and break loop
+        events.append({
+            "title": event_title,
+            "time": event_time,
+            "notified": False
+        })
+        formatted = event_time.strftime('%I:%M %p on %A, %d %B %Y')
+        speaker.Speak(f"Event created: {event_title} at {formatted}")
+        print(f"✓ Event created: {event_title} at {formatted}")
+        break
+
+
+def check_events():
+    """
+    Call this frequently (e.g. once per loop). It:
+      1) Grabs the current datetime
+      2) Finds any event where now >= event time and not yet notified
+      3) Speaks a reminder and marks it notified
+    """
+    now = datetime.datetime.now()
+    for event in events:
+        if not event["notified"] and now >= event["time"]:
+            # Speak the reminder
+            formatted = event["time"].strftime('%I:%M %p on %A')
+            speaker.Speak(f"Reminder: {event['title']} at {formatted} is starting now.")
+            # Prevent speaking again
+            event["notified"] = True
+
+
+def play_pause_media():
+    keyboard.send('play/pause media')
+
+
+app_processes = {
+    "notepad": "notepad.exe",
+    "calculator": "calc.exe",
+    "paint": "mspaint.exe",
+    "word": "winword.exe",
+    "excel": "excel.exe",
+    "powerpoint": "powerpnt.exe",
+    "chrome": "chrome.exe",
+    "firefox": "firefox.exe",
+    "control panel": "control.exe",
+    "task manager": "taskmgr.exe",
+    "cmd": "cmd.exe",
+    "mail": "outlook.exe",
+    "spotify": "Spotify.exe",
+    "vlc": "vlc.exe",
+    "steam": "Steam.exe",
+    "vs code": "Code.exe",
+    "youtube": "chrome.exe"
+}
+
+
+def close_application(app_name):
+    """
+    Close an application by its process name.
+    app_name: string, e.g. 'notepad.exe', 'chrome.exe'
+    """
+    try:
+        subprocess.run(["taskkill", "/f", "/im", app_name], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        speaker.Speak(f"Closed {app_name.replace('.exe', '')}.")
+    except subprocess.CalledProcessError:
+        speaker.Speak(f"Could not close {app_name}. It might not be running.")
+
+
+def choose_voice_gender(max_tries: int = 3):
+    voices = speaker.GetVoices()
+
+    for _ in range(max_tries):
+        speaker.Speak("Would you like a women voice or a man voice?")
+        with sr.Microphone() as source:
+            r.adjust_for_ambient_noise(source, duration=0.5)
+            try:
+                audio = r.listen(source, timeout=5, phrase_time_limit=4)
+                reply = r.recognize_google(audio, language="en-in").lower()
+                print("Voice-choice reply:", reply)
+            except sr.WaitTimeoutError:
+                speaker.Speak("No answer heard.")
+                continue
+            except sr.UnknownValueError:
+                speaker.Speak("Sorry, I couldn't understand.")
+                continue
+            except sr.RequestError:
+                speaker.Speak("Speech service error. I'll keep the default voice.")
+                return
+
+        if any(word in reply for word in ("girl", "female", "woman")):
+            desired_gender = "Female"
+        elif any(word in reply for word in ("boy", "male", "man", "men")):
+            desired_gender = "Male"
+        else:
+            speaker.Speak("Please say girl or boy.")
+            continue
+
+        # Try to find the first installed voice that matches the gender
+        selected = None
+        for v in voices:
+            try:
+                if v.GetAttribute("Gender") == desired_gender:
+                    selected = v
+                    break
+            except Exception:
+                # Older SAPI versions: fall back to description text
+                if desired_gender.lower() in v.GetDescription().lower():
+                    selected = v
+                    break
+
+        if selected:
+            speaker.Voice = selected
+            speaker.Speak(f"Okay, I will speak with a {desired_gender.lower()} voice.")
+            return
+        else:
+            speaker.Speak(f"Sorry, no {desired_gender.lower()} voice is installed.")
+            return
+
+    speaker.Speak("I'll keep the current voice.")
+
 
 # Recognizer configuration
 r = sr.Recognizer()
@@ -23,9 +317,72 @@ r.energy_threshold = 1000
 r.dynamic_energy_threshold = True
 r.pause_threshold = 0.5
 
+
+def google_audio(text: str, lang_code: str = "en"):
+    """
+    Synthesise <text> with Google TTS and play it back.
+    lang_code examples: 'en', 'hi', 'te', 'fr', …
+    """
+    try:
+        tts = gTTS(text=text, lang=lang_code)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            temp_mp3 = fp.name
+        tts.save(temp_mp3)
+        playsound.playsound(temp_mp3, block=True)
+    finally:
+        # remove the temp file even if playback fails
+        try:
+            os.remove(temp_mp3)
+        except:
+            pass
+
+
+# spoken language names → gTTS language codes
+LANG_CODES = {
+    'afrikaans': 'af', 'arabic': 'ar', 'bengali': 'bn', 'chinese': 'zh-cn',
+    'dutch': 'nl', 'english': 'en', 'french': 'fr', 'german': 'de',
+    'hindi': 'hi', 'italian': 'it', 'japanese': 'ja', 'korean': 'ko',
+    'marathi': 'mr', 'portuguese': 'pt', 'punjabi': 'pa', 'russian': 'ru',
+    'spanish': 'es', 'tamil': 'ta', 'telugu': 'te', 'urdu': 'ur'
+}
+
+
+def translate_text(raw_cmd: str):
+    """
+    Accepts strings like
+        "hello how are you to telugu"
+        "hi everyone in spanish"
+    """
+    if " to " in raw_cmd:
+        text_part, lang_name = raw_cmd.rsplit(" to ", 1)
+    elif " in " in raw_cmd:
+        text_part, lang_name = raw_cmd.rsplit(" in ", 1)
+    else:
+        speaker.Speak("Please say, for example: translate hello to Hindi.")
+        return
+
+    lang_name = lang_name.strip().lower()
+    text_part = text_part.strip()
+
+    lang_code = LANG_CODES.get(lang_name)
+    if not lang_code:
+        speaker.Speak(f"Sorry, I don't support the language {lang_name}.")
+        return
+
+    try:
+        translated = GoogleTranslator(source="auto",
+                                      target=lang_code).translate(text_part)
+        print(f"TRANSLATION ({lang_name.title()}): {translated}")
+        google_audio(translated, lang_code)
+    except Exception as e:
+        print("Translation error:", e)
+        speaker.Speak("Something went wrong while translating.")
+
+
 def get_brightness():
     current_brightness = sbc.get_brightness()[0]
     return current_brightness
+
 
 # Function to increase brightness by 10%
 def increase_brightness():
@@ -33,6 +390,7 @@ def increase_brightness():
     new_brightness = min(current_brightness + 10, 100)
     sbc.set_brightness(new_brightness)
     speaker.Speak(f"Brightness increased to {new_brightness}%")
+
 
 # Function to decrease brightness by 10%
 def decrease_brightness():
@@ -46,7 +404,7 @@ def decrease_brightness():
 def get_volume():
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(
-        IAudioEndpointVolume._iid_, 0, None)
+        IAudioEndpointVolume.iid, 0, None)
     volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
     volume = volume_interface.GetMasterVolumeLevelScalar() * 100
     return round(volume)
@@ -72,11 +430,54 @@ def decrease_volume():
 def set_volume(volume_level):
     devices = AudioUtilities.GetSpeakers()
     interface = devices.Activate(
-        IAudioEndpointVolume._iid_, 0, None)
+        IAudioEndpointVolume.iid, 0, None)
     volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
     volume_interface.SetMasterVolumeLevelScalar(volume_level / 100, None)
 
+
+# -------- ENHANCED GEMINI API CALL --------
+def call_gemini_api(user_input):
+    """Enhanced Gemini API call with better prompting"""
+    # Direct prompt for crisp, concise Indian English answers
+    prompt_text = (
+            "You are Lisa A.I., a helpful and crisp Indian English voice assistant. "
+            "Respond concisely and directly, no fluff.\n\nUser: " + user_input + "\nLisa:"
+    )
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt_text}]}]
+    }
+    try:
+        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
+        result = response.json()
+        # Extract the first candidate text
+        answer = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # Clean any trailing instructions or placeholders if any
+        answer = answer.replace("\n", " ").strip()
+        if not answer:
+            return "Sorry, I couldn't find an answer to that."
+        return answer
+    except Exception as e:
+        print(f"API error: {e}")
+        return "Sorry, I am unable to fetch the information at the moment."
+
+
+# -------- SCREEN TEXT READING --------
+def read_screen_text():
+    """Capture and read text from screen using OCR"""
+    try:
+        screenshot = pyautogui.screenshot()
+        gray_img = screenshot.convert('L')
+        text = pytesseract.image_to_string(gray_img).strip()
+        return text
+    except Exception as e:
+        print(f"Screen reading error: {e}")
+        return ""
+
+
 def ai(prompt):
+    """Original AI function - now enhanced"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={apikey}"
 
     headers = {
@@ -100,7 +501,7 @@ def ai(prompt):
 
         # Extract the response text
         output = result["candidates"][0]["content"]["parts"][0]["text"]
-        full_text = f"Gemini API response for Prompt: {prompt}\n*************************\n\n{output}"
+        full_text = f"Gemini API response for Prompt: {prompt}\n*\n\n{output}"
         print(full_text)
 
         # Save response to file
@@ -127,6 +528,7 @@ def greet_user():
     current_hour = time.localtime().tm_hour
     tf = "morning" if 5 <= current_hour < 12 else "afternoon" if 12 <= current_hour <= 18 else "evening"
     speaker.Speak(f"Good {tf}, this is Lisa. How can I help you?")
+
 
 def handle_youtube():
     speaker.Speak("Opening YouTube. Do you want to play any Video?")
@@ -179,6 +581,7 @@ def handle_youtube():
             except sr.RequestError:
                 speaker.Speak("I am unable to process your request. Check your internet connection.")
                 break
+
 
 def sendmail():
     while True:
@@ -316,17 +719,69 @@ def open_website(query):
 
     return False
 
+
+# -------- ENHANCED COMMAND PROCESSING --------
+def process_enhanced_commands(command):
+    """Process enhanced commands like weather, news, and screen reading"""
+    command = command.lower()
+
+    if any(word in command for word in ["weather", "temperature", "forecast"]):
+        prompt = "What is the current weather and short forecast for India? Answer crisply."
+        response = call_gemini_api(prompt)
+        speaker.Speak(response)
+        return True
+
+    elif "news" in command:
+        prompt = "Give me the latest top news headlines in India and globally, briefly."
+        response = call_gemini_api(prompt)
+        speaker.Speak(response)
+        return True
+
+    elif any(phrase in command for phrase in ["read screen", "read text", "read this"]):
+        speaker.Speak("Reading the text on your screen now.")
+        screen_text = read_screen_text()
+        if screen_text:
+            speaker.Speak(screen_text)
+        else:
+            speaker.Speak("No readable text found on the screen.")
+        return True
+
+    return False
+
+
 def main():
     greet_user()
+    choose_voice_gender()  # ask once: girl or boy voice?
+
     while True:
+        check_events()
         with sr.Microphone() as source:
             print("Listening...")
+            check_events()
             r.adjust_for_ambient_noise(source, duration=0.5)
             try:
                 audio = r.listen(source, timeout=5, phrase_time_limit=5)
                 query = r.recognize_google(audio, language="en-in").lower()
                 print(f"User said: {query}")
 
+                # Check for enhanced commands first
+                if process_enhanced_commands(query):
+                    continue
+
+                # Original commands
+                if "read my emails" in query or "read unread emails" in query:
+                    read_unread_emails()
+                    continue
+                if "create event" in query:
+                    create_event()  # this will prompt repeatedly until it gets a valid "TITLE at TIME"
+                    continue
+                if "close " in query:
+                    app_to_close = query.replace("close ", "").strip()
+                    if app_to_close in app_processes:
+                        close_application(app_processes[app_to_close])
+                    else:
+                        speaker.Speak(f"I don't know how to close {app_to_close}.")
+                    continue
                 if query == "exit":
                     speaker.Speak("Thank you, have a nice day!")
                     break
@@ -343,16 +798,21 @@ def main():
                     now = datetime.datetime.now()
                     speaker.Speak(f"The time is {now.strftime('%H')} hours and {now.strftime('%M')} minutes")
                     continue
-
                 if "increase volume" in query:
                     increase_volume()
                     continue
-
                 if "decrease volume" in query:
                     decrease_volume()
                     continue
                 if query == "open youtube":
                     handle_youtube()
+                    continue
+                if "play" in query or "pause" in query:
+                    play_pause_media()
+                    speaker.Speak("Toggling play and pause.")
+                    continue
+                if query.startswith("translate "):
+                    translate_text(query[len("translate "):])
                     continue
                 if "using artificial intelligence" in query:
                     ai(prompt=query)
