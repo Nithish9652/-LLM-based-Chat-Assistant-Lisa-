@@ -30,8 +30,8 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from ctypes import POINTER, cast
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
-apikey = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
-GEMINI_API_KEY = "AIzaSyAe2L5HOOK8Spda8lt9bWl8-CCZshknN7Y"
+apikey = "Add your api key"
+GEMINI_API_KEY = "Add your api key"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 # -------- ENHANCED TTS SETUP --------
