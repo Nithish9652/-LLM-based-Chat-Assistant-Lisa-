@@ -1,43 +1,55 @@
-# -LLM-based-Chat-Assistant-Lisa-
+# Lisa – LLM-Based Python Voice Assistant
 
-
-# Lisa - Your Personal Voice Assistant (Python)
-
-**Lisa** is a smart desktop voice assistant built using Python. It helps users interact with their system and the internet using natural voice commands. Powered by speech recognition, text-to-speech, and Gemini API integration, Lisa performs various tasks like opening websites, adjusting brightness/volume, drafting emails, playing YouTube videos, and responding to AI prompts.
+Lisa is a smart desktop voice assistant built using Python. It performs system operations, reads emails, takes screenshots, extracts on-screen text using OCR, plays YouTube videos, opens apps/websites, and responds to AI prompts using the Gemini API.
 
 ---
 
-## 🔧 Features
+## 🚀 Features
 
-- 🎤 **Voice-Activated Interface**  
-  Control the assistant using voice with Google Speech Recognition.
+### 🎤 Voice Input
+- Real-time Google Speech Recognition
 
-- 💬 **Text-to-Speech Responses**  
-  Uses SAPI.SpVoice (Windows only) to respond audibly.
+### 🔊 Text-to-Speech
+- Windows SAPI voice output
 
-- 🌞 **Control Brightness**  
-  Increase/decrease screen brightness by 10%.
+### 🌐 Open Websites & Applications
+- “Open Google”
+- “Open chrome”
+- “Open facebook.com”
 
-- 🔊 **Control Volume**  
-  Increase/decrease system volume.
+### 🌞 Brightness Control
+- “Brightness up”
+- “Brightness down”
 
-- 🌐 **Open Websites and Applications**  
-  Open popular websites or local applications via voice command.
+### 🔊 Volume Control
+- “Volume up”
+- “Volume down”
 
-- 📧 **Send Emails**  
-  Draft email using your voice (opens default mail client with content prefilled).
+### 📧 Read Gmail Inbox
+- Reads latest email using IMAP
+- Speaks sender, subject & body
 
-- 🎥 **Play YouTube Videos**  
-  Search and play YouTube videos using `pytube`.
+### 🖼 Screenshot Capture
+- “Lisa take screenshot”
+- Saves screenshot as `screen.png`
 
-- 🤖 **Ask AI (Gemini API)**  
-  Send prompts to Google's Gemini API and get responses saved to local files.
+### 👁 Screen Reader (OCR)
+- “Lisa read screen”
+- Takes screenshot → Extracts text with Tesseract OCR → Speaks text
+
+### 🎥 YouTube Video Player
+- Search & play videos using pytube
+
+### 🤖 AI Integration (Gemini API)
+- “AI explain quantum physics”
+- “AI write a poem”
+- Uses Google Gemini API for responses
 
 ---
 
-## 📦 Requirements
+## 📦 Installation
 
-Install dependencies via `pip`:
+### 1️⃣ Install Python Dependencies
 
 ```bash
-pip install SpeechRecognition pywin32 screen_brightness_control pycaw requests pytube3
+pip install SpeechRecognition pywin32 screen_brightness_control pycaw requests pytube3 pillow pytesseract pyautogui imaplib2
